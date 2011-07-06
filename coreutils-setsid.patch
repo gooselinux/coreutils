@@ -1,0 +1,96 @@
+--- coreutils-6.7/src/su.c.setsid	2007-01-09 17:26:26.000000000 +0000
++++ coreutils-6.7/src/su.c	2007-01-09 17:26:57.000000000 +0000
+@@ -176,9 +176,13 @@
+ /* If true, change some environment vars to indicate the user su'd to.  */
+ static bool change_environment;
+ 
++/* If true, then don't call setsid() with a command. */
++int same_session = 0;
++
+ static struct option const longopts[] =
+ {
+   {"command", required_argument, NULL, 'c'},
++  {"session-command", required_argument, NULL, 'C'},
+   {"fast", no_argument, NULL, 'f'},
+   {"login", no_argument, NULL, 'l'},
+   {"preserve-environment", no_argument, NULL, 'p'},
+@@ -478,6 +482,8 @@
+   if (child == 0) {  /* child shell */
+   change_identity (pw);
+   pam_end(pamh, 0);
++  if (!same_session)
++    setsid ();
+ #endif
+ 
+   if (simulate_login)
+@@ -532,13 +538,27 @@
+     sigemptyset(&action.sa_mask);
+     action.sa_flags = 0;
+     sigemptyset(&ourset);
+-    if (sigaddset(&ourset, SIGTERM)
+-        || sigaddset(&ourset, SIGALRM)
+-        || sigaction(SIGTERM, &action, NULL)
+-        || sigprocmask(SIG_UNBLOCK, &ourset, NULL)) {
++    if (!same_session)
++      {
++        if (sigaddset(&ourset, SIGINT) || sigaddset(&ourset, SIGQUIT))
++          {
++            fprintf(stderr, "%s: signal masking malfunction\n", PROGRAM_NAME);
++            caught = 1;
++          }
++      }
++    if (!caught && (sigaddset(&ourset, SIGTERM)
++                    || sigaddset(&ourset, SIGALRM)
++                    || sigaction(SIGTERM, &action, NULL)
++                    || sigprocmask(SIG_UNBLOCK, &ourset, NULL))) {
+       fprintf(stderr, "%s: signal masking malfunction\n", PROGRAM_NAME);
+       caught = 1;
+     }
++    if (!caught && !same_session && (sigaction(SIGINT, &action, NULL)
++                                     || sigaction(SIGQUIT, &action, NULL)))
++      {
++        fprintf(stderr, "%s: signal masking malfunction\n", PROGRAM_NAME);
++        caught = 1;
++      }
+   }
+   if (!caught) {
+     do {
+@@ -609,6 +629,8 @@
+ \n\
+   -, -l, --login               make the shell a login shell\n\
+   -c, --command=COMMAND        pass a single COMMAND to the shell with -c\n\
++  --session-command=COMMAND    pass a single COMMAND to the shell with -c\n\
++                               and do not create a new session\n\
+   -f, --fast                   pass -f to the shell (for csh or tcsh)\n\
+   -m, --preserve-environment   do not reset environment variables\n\
+   -p                           same as -m\n\
+@@ -631,6 +653,7 @@
+   int optc;
+   const char *new_user = DEFAULT_USER;
+   char *command = NULL;
++  int request_same_session = 0;
+   char *shell = NULL;
+   struct passwd *pw;
+   struct passwd pw_copy;
+@@ -656,6 +679,11 @@
+           command = optarg;
+           break;
+ 
++        case 'C':
++          command = optarg;
++          request_same_session = 1;
++          break;
++
+         case 'f':
+           fast_startup = true;
+           break;
+@@ -725,6 +753,9 @@
+     }
+ #endif
+ 
++  if (request_same_session || !command || !pw->pw_uid)
++    same_session = 1;
++
+   if (!shell && !change_environment)
+     shell = getenv ("SHELL");
+   if (shell && getuid () != 0 && restricted_shell (pw->pw_shell))

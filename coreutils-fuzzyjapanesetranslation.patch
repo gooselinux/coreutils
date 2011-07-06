@@ -1,0 +1,19 @@
+diff -urNp coreutils-8.4-orig/po/ja.po coreutils-8.4/po/ja.po
+--- coreutils-8.4-orig/po/ja.po	2010-06-07 14:09:58.899419635 +0200
++++ coreutils-8.4/po/ja.po	2010-06-07 14:11:08.659171206 +0200
+@@ -5057,7 +5057,6 @@ msgstr "%s: 無効な番号です"
+ #. Note also that specifying a width as in %5b is erroneous as strftime
+ #. will count bytes rather than characters in multibyte locales.
+ #: src/ls.c:733
+-#, fuzzy
+ msgid "%b %e  %Y"
+ msgstr "%b %e %H:%M %Y"
+ 
+@@ -5067,7 +5066,6 @@ msgstr "%b %e %H:%M %Y"
+ #. Note also that specifying a width as in %5b is erroneous as strftime
+ #. will count bytes rather than characters in multibyte locales.
+ #: src/ls.c:746
+-#, fuzzy
+ msgid "%b %e %H:%M"
+ msgstr "%b %e %H:%M %Y"
+ 

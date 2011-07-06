@@ -1,0 +1,98 @@
+From aad0bde0b5aa6ccf2714f43676d4941f820c6283 Mon Sep 17 00:00:00 2001
+From: Kamil Dudka <kdudka@redhat.com>
+Date: Fri, 22 Jan 2010 15:17:19 +0100
+Subject: [PATCH] who --mesg (-T) can use a more accurate test for TTY writability
+
+Enabled when coreutils is configured with --with-tty-group.
+Based on a patch written by Piotr Gackiewicz.  Details at
+http://bugzilla.redhat.com/454261
+
+* src/who.c (is_tty_writable): A new function returning true if a TTY
+device is writable by the group.  Additionally it checks the group to be
+the same as TTY_GROUP_NAME when compiled with --with-tty-group.
+* m4/jm-macros.m4: Introduce a new configure option --with-tty-group.
+---
+ m4/jm-macros.m4 |   19 +++++++++++++++++++
+ src/who.c       |   22 +++++++++++++++++++++-
+ 2 files changed, 40 insertions(+), 1 deletions(-)
+
+diff --git a/m4/jm-macros.m4 b/m4/jm-macros.m4
+index 2713827..0ddbf2f 100644
+--- a/m4/jm-macros.m4
++++ b/m4/jm-macros.m4
+@@ -144,6 +144,25 @@ AC_DEFUN([coreutils_MACROS],
+     ])
+ 
+   AC_REQUIRE([AM_LANGINFO_CODESET])
++
++  # Accept configure options: --with-tty-group[=GROUP], --without-tty-group
++  # You can determine the group of a TTY via 'stat --format %G /dev/tty'
++  # Omitting this option is equivalent to using --without-tty-group.
++  AC_ARG_WITH([tty-group],
++    AS_HELP_STRING([--with-tty-group[[[=NAME]]]],
++      [group used by system for TTYs, "tty" when not specified]
++      [ (default: do not rely on any group used for TTYs)]),
++    [tty_group_name=$withval],
++    [tty_group_name=no])
++
++  if test "x$tty_group_name" != xno; then
++    if test "x$tty_group_name" = xyes; then
++      tty_group_name=tty
++    fi
++    AC_MSG_NOTICE([TTY group used by system set to "$tty_group_name"])
++    AC_DEFINE_UNQUOTED([TTY_GROUP_NAME], ["$tty_group_name"],
++      [group used by system for TTYs])
++  fi
+ ])
+ 
+ AC_DEFUN([gl_CHECK_ALL_HEADERS],
+diff --git a/src/who.c b/src/who.c
+index f71db3b..4859694 100644
+--- a/src/who.c
++++ b/src/who.c
+@@ -37,6 +37,10 @@
+ #include "hard-locale.h"
+ #include "quote.h"
+ 
++#ifdef TTY_GROUP_NAME
++# include <grp.h>
++#endif
++
+ /* The official name of this program (e.g., no `g' prefix).  */
+ #define PROGRAM_NAME "who"
+ 
+@@ -308,6 +312,22 @@ print_line (int userlen, const char *user, const char state,
+   free (x_exitstr);
+ }
+ 
++/* Return true if a terminal device given as PSTAT allows other users
++   to send messages to; false otherwise */
++static bool
++is_tty_writable (struct stat const *pstat)
++{
++#ifdef TTY_GROUP_NAME
++  /* Ensure the group of the TTY device matches TTY_GROUP_NAME, more info at
++     https://bugzilla.redhat.com/454261 */
++  struct group *ttygr = getgrnam (TTY_GROUP_NAME);
++  if (!ttygr || (pstat->st_gid != ttygr->gr_gid))
++    return false;
++#endif
++
++  return pstat->st_mode & S_IWGRP;
++}
++
+ /* Send properly parsed USER_PROCESS info to print_line.  The most
+    recent boot time is BOOTTIME. */
+ static void
+@@ -346,7 +366,7 @@ print_user (const STRUCT_UTMP *utmp_ent, time_t boottime)
+ 
+   if (stat (line, &stats) == 0)
+     {
+-      mesg = (stats.st_mode & S_IWGRP) ? '+' : '-';
++      mesg = is_tty_writable (&stats) ? '+' : '-';
+       last_change = stats.st_atime;
+     }
+   else
+-- 
+1.6.5
+

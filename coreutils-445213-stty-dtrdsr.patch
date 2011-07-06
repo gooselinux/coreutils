@@ -1,0 +1,203 @@
+diff -urNp coreutils-8.2-orig/doc/coreutils.texi coreutils-8.2/doc/coreutils.texi
+--- coreutils-8.2-orig/doc/coreutils.texi	2009-12-03 10:33:03.000000000 +0100
++++ coreutils-8.2/doc/coreutils.texi	2009-12-17 14:27:29.000000000 +0100
+@@ -12430,7 +12430,15 @@ Disable modem control signals.  May be n
+ @cindex hardware flow control
+ @cindex flow control, hardware
+ @cindex RTS/CTS flow control
+-Enable RTS/CTS flow control.  Non-@acronym{POSIX}.  May be negated.
++Enable RTS/CTS flow control. Disables DTR/DSR flow control. Non-@acronym{POSIX}.  May be negated.
++
++@item cdtrdsr
++@opindex cdtrdsr
++@cindex hardware flow control
++@cindex flow control, hardware
++@cindex DTR/DSR flow control
++Enable DTR/DSR flow control. Disables RTS/CTS flow control. Non-@acronym{POSIX}.  May be negated.  No stty-readable form available.  It needs to be supported by device.  Usage on device without DTR/DSR support could lead to an error and failure of @command{stty}.
++
+ @end table
+ 
+ 
+diff -urNp coreutils-8.2-orig/src/stty.c coreutils-8.2/src/stty.c
+--- coreutils-8.2-orig/src/stty.c	2009-12-17 14:24:55.000000000 +0100
++++ coreutils-8.2/src/stty.c	2009-12-17 14:32:10.000000000 +0100
+@@ -204,6 +204,33 @@ struct mode_info
+     unsigned long mask;		/* Other bits to turn off for this mode.  */
+   };
+ 
++#ifndef NFF
++# define NFF	5
++#endif
++
++#ifndef TCGETX
++# define TCGETX         0x5432 /* SYS5 TCGETX compatibility */
++# define TCSETX         0x5433
++# define TCSETXF                0x5434
++# define TCSETXW                0x5435
++#endif
++
++#ifndef RTSXOFF
++# define RTSXOFF		0x0001          /* RTS flow control on input */
++# define CTSXON		0x0002          /* CTS flow control on output */
++# define DTRXOFF		0x0004          /* DTR flow control on input */
++# define DSRXON		0x0008          /* DSR flow control on output */
++#endif
++
++
++  struct termiox
++ {
++  uint16_t	x_hflag;
++  uint16_t	x_cflag;
++  uint16_t	x_rflag[NFF];
++  uint16_t	x_sflag;
++ };
++
+ static struct mode_info const mode_info[] =
+ {
+   {"parenb", control, REV, PARENB, 0},
+@@ -220,7 +247,7 @@ static struct mode_info const mode_info[
+ #ifdef CRTSCTS
+   {"crtscts", control, REV, CRTSCTS, 0},
+ #endif
+-
++  {"cdtrdsr", control, REV, 0, 0},
+   {"ignbrk", input, SANE_UNSET | REV, IGNBRK, 0},
+   {"brkint", input, SANE_SET | REV, BRKINT, 0},
+   {"ignpar", input, REV, IGNPAR, 0},
+@@ -580,7 +607,9 @@ Special settings:\n\
+ Control settings:\n\
+    [-]clocal     disable modem control signals\n\
+    [-]cread      allow input to be received\n\
+- * [-]crtscts    enable RTS/CTS handshaking\n\
++ * [-]crtscts    enable RTS/CTS handshaking (disables DTR/DSR)\n\
++ * [-]cdtrdsr    enable DTR/DSR handshaking (disables RTS/CTS), no stty\n\
++                 readable form available, has to be supported by device\n\
+    csN           set character size to N bits, N in [5..8]\n\
+ "), stdout);
+       fputs (_("\
+@@ -1078,6 +1107,74 @@ set_mode (struct mode_info const *info, 
+ 
+   bitsp = mode_type_flag (info->type, mode);
+ 
++  if (STREQ (info->name, "cdtrdsr"))
++    {
++    struct termiox modexattrs;
++    memset(&modexattrs, 0, sizeof(modexattrs));
++    if (ioctl(STDIN_FILENO, TCGETX, &modexattrs) == -1)
++      {
++        error (EXIT_FAILURE, 0,
++               _("Error while getting extended atributes for %s flow control."),
++
++               "dtr/dsr");
++      }
++    else
++      {
++        if (reversed)
++        {
++          modexattrs.x_cflag &= ~(DTRXOFF | DSRXON);
++        }
++        else
++        {
++          modexattrs.x_cflag |= (DTRXOFF | DSRXON);
++# if defined CRTSCTS
++          /* Reset RTS/CTS control flow + it's termiox */
++          modexattrs.x_cflag &= ~(RTSXOFF | CTSXON);
++          mode->c_cflag &= ~CRTSCTS;
++# endif
++        }
++        if (ioctl(STDIN_FILENO, TCSETX, &modexattrs) == -1)
++        {
++          error (EXIT_FAILURE, 0,
++                 _("Error while storing extended atributes for %s flow control."),
++                 "dtr/dsr");
++        }
++      }
++    }
++
++#if defined CRTSCTS
++  if (STREQ (info->name, "crtscts"))
++    {
++    struct termiox modexattrs;
++    memset(&modexattrs, 0, sizeof(modexattrs));
++    if ((ioctl(STDIN_FILENO, TCGETX, &modexattrs) == -1) && (errno != EINVAL))
++      {
++      error (EXIT_FAILURE, 0,
++             _("Error while getting extended atributes for %s flow control."),
++             "rts/cts");
++      }
++    else
++      {
++        if (reversed)
++          {
++            modexattrs.x_cflag &= ~(RTSXOFF | CTSXON);
++          }
++        else
++          {
++            modexattrs.x_cflag |= (RTSXOFF | CTSXON);
++            /* Reset DTR/DSR control flow termiox */
++            modexattrs.x_cflag &= ~(DTRXOFF | DSRXON);
++          }
++        if ((ioctl(STDIN_FILENO, TCSETX, &modexattrs) == -1) && (errno != EINVAL))
++          {
++            error (EXIT_FAILURE, 0,
++                   _("Error while storing extended atributes for %s flow control."),
++                  "rts/cts");
++          }
++      }
++  }
++#endif
++
+   if (bitsp == NULL)
+     {
+       /* Combination mode. */
+@@ -1543,19 +1640,30 @@ display_changed (struct termios *mode)
+ 
+       bitsp = mode_type_flag (mode_info[i].type, mode);
+       mask = mode_info[i].mask ? mode_info[i].mask : mode_info[i].bits;
+-      if ((*bitsp & mask) == mode_info[i].bits)
++      if (STREQ (mode_info[i].name, "cdtrdsr"))
++        {
++          struct termiox modexattrs;
++          memset(&modexattrs, 0, sizeof(modexattrs));
++          ioctl(STDIN_FILENO, TCGETX, &modexattrs);
++          wrapf ("%scdtrdsr",
++            ((modexattrs.x_cflag & DTRXOFF)&&
++             (modexattrs.x_cflag & DSRXON))?"":"-");
++        } else
+         {
+-          if (mode_info[i].flags & SANE_UNSET)
++          if ((*bitsp & mask) == mode_info[i].bits)
+             {
+-              wrapf ("%s", mode_info[i].name);
++              if (mode_info[i].flags & SANE_UNSET)
++                {
++                  wrapf ("%s", mode_info[i].name);
++                  empty_line = false;
++                }
++            }
++          else if ((mode_info[i].flags & (SANE_SET | REV)) == (SANE_SET | REV))
++            {
++              wrapf ("-%s", mode_info[i].name);
+               empty_line = false;
+             }
+         }
+-      else if ((mode_info[i].flags & (SANE_SET | REV)) == (SANE_SET | REV))
+-        {
+-          wrapf ("-%s", mode_info[i].name);
+-          empty_line = false;
+-        }
+     }
+   if (!empty_line)
+     putchar ('\n');
+diff -urNp coreutils-8.2-orig/tests/misc/stty coreutils-8.2/tests/misc/stty
+--- coreutils-8.2-orig/tests/misc/stty	2009-12-08 16:09:22.000000000 +0100
++++ coreutils-8.2/tests/misc/stty	2009-12-17 14:48:19.000000000 +0100
+@@ -65,7 +65,7 @@ for opt in $options; do
+   # stty: standard input: unable to perform all requested operations
+   # on Linux 2.2.0-pre4 kernels.  Also since around Linux 2.6.30
+   # other serial control settings give the same error. So skip them.
+-  case $opt in parenb|parodd|cstopb|crtscts) continue;; esac
++  case $opt in parenb|parodd|cstopb|crtscts|cdtrdsr) continue;; esac
+ 
+   stty $opt || fail=1
+ 

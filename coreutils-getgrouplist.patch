@@ -1,0 +1,29 @@
+diff -urp coreutils-6.10-orig/lib/getugroups.c coreutils-6.10/lib/getugroups.c
+--- coreutils-6.10-orig/lib/getugroups.c	2007-10-17 15:47:25.000000000 +0200
++++ coreutils-6.10/lib/getugroups.c	2008-01-24 16:37:04.000000000 +0100
+@@ -19,6 +19,9 @@
+ 
+ #include <config.h>
+ 
++/* We do not need this code if getgrouplist(3) is available.  */
++#ifndef HAVE_GETGROUPLIST
++
+ #include "getugroups.h"
+ 
+ #include <errno.h>
+@@ -123,3 +126,4 @@ getugroups (int maxcount, GETGROUPS_T *g
+ }
+ 
+ #endif /* HAVE_GRP_H */
++#endif	/* have getgrouplist */
+diff -urp coreutils-6.10-orig/m4/jm-macros.m4 coreutils-6.10/m4/jm-macros.m4
+--- coreutils-6.10-orig/m4/jm-macros.m4	2007-11-25 14:23:31.000000000 +0100
++++ coreutils-6.10/m4/jm-macros.m4	2008-01-24 16:42:00.000000000 +0100
+@@ -52,6 +52,7 @@ AC_DEFUN([coreutils_MACROS],
+     fchown \
+     fchmod \
+     ftruncate \
++    getgrouplist \
+     iswspace \
+     mkfifo \
+     mbrlen \
