@@ -1,0 +1,431 @@
+From: Pádraig Brady <P@draigBrady.com>
+Date: Mon, 27 Sep 2010 06:16:44 +0000 (+0100)
+Subject: tr: fix various issues with case conversion
+X-Git-Url: http://git.savannah.gnu.org/gitweb/?p=coreutils.git;a=commitdiff_plain;h=3f48829c;hp=704eedab034e24814067c535d3577f165c9a8b68
+
+tr: fix various issues with case conversion
+
+This valid translation spec aborted:
+  LC_ALL=en_US.iso-8859-1 tr '[:upper:]- ' '[:lower:]_'
+This invalid translation spec aborted:
+  LC_ALL=en_US.iso-8859-1 tr '[:upper:] '  '[:lower:]'
+This was caused by commit 6efd1046, 05-01-2008,
+"Avoid tr case-conversion failure in some locales"
+
+This misaligned conversion spec was allowed:
+  LC_ALL=C tr 'A-Y[:lower:]' 'a-z[:upper:]'
+This was caused by commit af5d0c36, 21-10-2007,
+"tr: do not reject an unmatched [:lower:] or [:upper:] in SET1"
+
+This misaligned spec was allowed by extending the class:
+  LC_ALL=C tr '[:upper:] ' '[:lower:]'
+
+* src/tr.c (validate_case_classes): A new function to check
+alignment of case conversion classes.  Also it adjusts the
+length of the sets so that locales with different numbers of
+upper and lower case characters, don't cause issues.
+(string2_extend): Disallow extending the case conversion
+class as in the above example.  That is locale dependent
+and most likely not what the user wants.
+(validate): Do the simple test for "restricted" char classes
+earlier, so we don't redundantly do more expensive validation.
+(main): Remove the case class validation, and simplify.
+* tests/misc/tr-case-class: A new test to test the various
+alignment and locale issues, associated with case conversion.
+* tests/misc/tr: Move case conversion tests to new tr-case-class.
+* tests/Makefile.am: Reference the new test.
+---
+
+diff --git a/src/tr.c b/src/tr.c
+index a5b6810..479d3d3 100644
+--- a/src/tr.c
++++ b/src/tr.c
+@@ -1177,6 +1177,78 @@ card_of_complement (struct Spec_list *s)
+   return cardinality;
+ }
+ 
++/* Discard the lengths associated with a case conversion,
++   as using the actual number of upper or lower case characters
++   is problematic when they don't match in some locales.
++   Also ensure the case conversion classes in string2 are
++   aligned correctly with those in string1.
++   Note POSIX says the behavior of `tr "[:upper:]" "[:upper:]"'
++   is undefined.  Therefore we allow it (unlike Solaris)
++   and treat it as a no-op.  */
++
++static void
++validate_case_classes (struct Spec_list *s1, struct Spec_list *s2)
++{
++  size_t n_upper = 0;
++  size_t n_lower = 0;
++  unsigned int i;
++  int c1 = 0;
++  int c2 = 0;
++  count old_s1_len = s1->length;
++  count old_s2_len = s2->length;
++  struct List_element *s1_tail = s1->tail;
++  struct List_element *s2_tail = s2->tail;
++  bool s1_new_element = true;
++  bool s2_new_element = true;
++
++  if (!s2->has_char_class)
++    return;
++
++  for (i = 0; i < N_CHARS; i++)
++    {
++      if (isupper (i))
++        n_upper++;
++      if (islower (i))
++        n_lower++;
++    }
++
++  s1->state = BEGIN_STATE;
++  s2->state = BEGIN_STATE;
++
++  while (c1 != -1 && c2 != -1)
++    {
++      enum Upper_Lower_class class_s1, class_s2;
++
++      c1 = get_next (s1, &class_s1);
++      c2 = get_next (s2, &class_s2);
++
++      /* If c2 transitions to a new case class, then
++         c1 must also transition at the same time.  */
++      if (s2_new_element && class_s2 != UL_NONE
++          && !(s1_new_element && class_s1 != UL_NONE))
++        error (EXIT_FAILURE, 0,
++               _("misaligned [:upper:] and/or [:lower:] construct"));
++
++      /* If case converting, quickly skip over the elements.  */
++      if (class_s2 != UL_NONE)
++        {
++          skip_construct (s1);
++          skip_construct (s2);
++          /* Discount insignificant/problematic lengths.  */
++          s1->length -= (class_s1 == UL_UPPER ? n_upper : n_lower) - 1;
++          s2->length -= (class_s2 == UL_UPPER ? n_upper : n_lower) - 1;
++        }
++
++      s1_new_element = s1->state == NEW_ELEMENT; /* Next element is new.  */
++      s2_new_element = s2->state == NEW_ELEMENT; /* Next element is new.  */
++    }
++
++  assert (old_s1_len >= s1->length && old_s2_len >= s2->length);
++
++  s1->tail = s1_tail;
++  s2->tail = s2_tail;
++}
++
+ /* Gather statistics about the spec-list S in preparation for the tests
+    in validate that determine the consistency of the specs.  This function
+    is called at most twice; once for string1, and again for any string2.
+@@ -1318,20 +1390,14 @@ parse_str (char const *s, struct Spec_list *spec_list)
+    Upon successful completion, S2->length is set to S1->length.  The only
+    way this function can fail to make S2 as long as S1 is when S2 has
+    zero-length, since in that case, there is no last character to repeat.
+-   So S2->length is required to be at least 1.
++   So S2->length is required to be at least 1.  */
+ 
+-   Providing this functionality allows the user to do some pretty
+-   non-BSD (and non-portable) things:  For example, the command
+-       tr -cs '[:upper:]0-9' '[:lower:]'
+-   is almost guaranteed to give results that depend on your collating
+-   sequence.  */
+ 
+ static void
+ string2_extend (const struct Spec_list *s1, struct Spec_list *s2)
+ {
+   struct List_element *p;
+   unsigned char char_to_repeat;
+-  int i;
+ 
+   assert (translating);
+   assert (s1->length > s2->length);
+@@ -1347,11 +1413,13 @@ string2_extend (const struct Spec_list *s1, struct Spec_list *s2)
+       char_to_repeat = p->u.range.last_char;
+       break;
+     case RE_CHAR_CLASS:
+-      for (i = N_CHARS - 1; i >= 0; i--)
+-        if (is_char_class_member (p->u.char_class, i))
+-          break;
+-      assert (i >= 0);
+-      char_to_repeat = i;
++      /* Note BSD allows extending of classes in string2.  For example:
++           tr '[:upper:]0-9' '[:lower:]'
++         That's not portable however, contradicts POSIX and is dependent
++         on your collating sequence.  */
++      error (EXIT_FAILURE, 0,
++             _("when translating with string1 longer than string2,\n\
++the latter string must not end with a character class"));
+       break;
+ 
+     case RE_REPEATED_CHAR:
+@@ -1431,6 +1499,15 @@ validate (struct Spec_list *s1, struct Spec_list *s2)
+ when translating"));
+             }
+ 
++          if (s2->has_restricted_char_class)
++            {
++              error (EXIT_FAILURE, 0,
++                     _("when translating, the only character classes that may \
++appear in\nstring2 are `upper' and `lower'"));
++            }
++
++          validate_case_classes (s1, s2);
++
+           if (s1->length > s2->length)
+             {
+               if (!truncate_set1)
+@@ -1452,13 +1529,6 @@ when translating"));
+                      _("when translating with complemented character classes,\
+ \nstring2 must map all characters in the domain to one"));
+             }
+-
+-          if (s2->has_restricted_char_class)
+-            {
+-              error (EXIT_FAILURE, 0,
+-                     _("when translating, the only character classes that may \
+-appear in\nstring2 are `upper' and `lower'"));
+-            }
+         }
+       else
+         /* Not translating.  */
+@@ -1812,7 +1882,6 @@ main (int argc, char **argv)
+         {
+           int c1, c2;
+           int i;
+-          bool case_convert = false;
+           enum Upper_Lower_class class_s1;
+           enum Upper_Lower_class class_s2;
+ 
+@@ -1822,47 +1891,21 @@ main (int argc, char **argv)
+           s2->state = BEGIN_STATE;
+           for (;;)
+             {
+-              /* When the previous pair identified case-converting classes,
+-                 advance S1 and S2 so that each points to the following
+-                 construct.  */
+-              if (case_convert)
+-                {
+-                  skip_construct (s1);
+-                  skip_construct (s2);
+-                  case_convert = false;
+-                }
+-
+               c1 = get_next (s1, &class_s1);
+               c2 = get_next (s2, &class_s2);
+ 
+-              /* When translating and there is an [:upper:] or [:lower:]
+-                 class in SET2, then there must be a corresponding [:lower:]
+-                 or [:upper:] class in SET1.  */
+-              if (class_s1 == UL_NONE
+-                  && (class_s2 == UL_LOWER || class_s2 == UL_UPPER))
+-                error (EXIT_FAILURE, 0,
+-                       _("misaligned [:upper:] and/or [:lower:] construct"));
+-
+               if (class_s1 == UL_LOWER && class_s2 == UL_UPPER)
+                 {
+-                  case_convert = true;
+                   for (i = 0; i < N_CHARS; i++)
+                     if (islower (i))
+                       xlate[i] = toupper (i);
+                 }
+               else if (class_s1 == UL_UPPER && class_s2 == UL_LOWER)
+                 {
+-                  case_convert = true;
+                   for (i = 0; i < N_CHARS; i++)
+                     if (isupper (i))
+                       xlate[i] = tolower (i);
+                 }
+-              else if ((class_s1 == UL_LOWER && class_s2 == UL_LOWER)
+-                       || (class_s1 == UL_UPPER && class_s2 == UL_UPPER))
+-                {
+-                  /* POSIX says the behavior of `tr "[:upper:]" "[:upper:]"'
+-                     is undefined.  Treat it as a no-op.  */
+-                }
+               else
+                 {
+                   /* The following should have been checked by validate...  */
+@@ -1870,6 +1913,13 @@ main (int argc, char **argv)
+                     break;
+                   xlate[c1] = c2;
+                 }
++
++              /* When case-converting, skip the elements as an optimization.  */
++              if (class_s2 != UL_NONE)
++                {
++                  skip_construct (s1);
++                  skip_construct (s2);
++                }
+             }
+           assert (c1 == -1 || truncate_set1);
+         }
+diff --git a/tests/Makefile.am b/tests/Makefile.am
+index 5619d0b..3236637 100644
+--- a/tests/Makefile.am
++++ b/tests/Makefile.am
+@@ -260,6 +260,7 @@ TESTS =						\
+   misc/timeout					\
+   misc/timeout-parameters			\
+   misc/tr					\
++  misc/tr-case-class				\
+   misc/truncate-dangling-symlink		\
+   misc/truncate-dir-fail			\
+   misc/truncate-fail-diag			\
+diff --git a/tests/misc/tr b/tests/misc/tr
+index ca7a960..00cd8e6 100755
+--- a/tests/misc/tr
++++ b/tests/misc/tr
+@@ -155,34 +155,8 @@ my @Tests =
+ 
+   # Up to coreutils-6.9, this would provoke a failed assertion.
+   ['no-abort-1', qw(-c a '[b*256]'), {IN=>'abc'}, {OUT=>'abb'}],
+-
+-  # Up to coreutils-6.9, tr rejected an unmatched [:lower:] or [:upper:] in SET1.
+-  ['s1-lower', qw('[:lower:]' '[.*]'),
+-   {IN=>'#$%123abcABC'}, {OUT=>'#$%123...ABC'}],
+-  ['s1-upper', qw('[:upper:]' '[.*]'),
+-   {IN=>'#$%123abcABC'}, {OUT=>'#$%123abc...'}],
+-
+-  # Up to coreutils-6.9.91, this would fail with the diagnostic:
+-  # tr: misaligned [:upper:] and/or [:lower:] construct
+-  # with LC_CTYPE=en_US.ISO-8859-1.
+-  ['tolower-F', qw('[:upper:]' '[:lower:]'), {IN=>'A'}, {OUT=>'a'}],
+-
+-  # When doing a case-converting translation with something after the
+-  # [:upper:] and [:lower:] elements, ensure that tr honors the following byte.
+-  ['upcase-xtra', qw('[:lower:].' '[:upper:]x'), {IN=>'abc.'}, {OUT=>'ABCx'}],
+-  ['dncase-xtra', qw('[:upper:].' '[:lower:]x'), {IN=>'ABC.'}, {OUT=>'abcx'}],
+ );
+ 
+-# Set LC_CTYPE=en_US.ISO-8859-1 in the environment of the tolower-F test.
+-foreach my $t (@Tests)
+-  {
+-    if ($t->[0] eq 'tolower-F')
+-      {
+-        push @$t, {ENV=>'LC_CTYPE=en_US.ISO-8859-1'};
+-        last;
+-      }
+-  }
+-
+ @Tests = triple_test \@Tests;
+ 
+ # tr takes its input only from stdin, not from a file argument, so
+diff --git a/tests/misc/tr-case-class b/tests/misc/tr-case-class
+new file mode 100755
+index 0000000..d81c676
+--- /dev/null
++++ b/tests/misc/tr-case-class
+@@ -0,0 +1,112 @@
++#!/bin/sh
++# Test case conversion classes
++
++# Copyright (C) 2010 Free Software Foundation, Inc.
++
++# This program is free software: you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation, either version 3 of the License, or
++# (at your option) any later version.
++
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++
++# You should have received a copy of the GNU General Public License
++# along with this program.  If not, see <http://www.gnu.org/licenses/>.
++
++. $srcdir/test-lib.sh
++
++# Ensure we support translation of case classes with extension
++echo '01234567899999999999999999' > exp
++echo 'abcdefghijklmnopqrstuvwxyz' |
++tr '[:lower:]' '0-9' > out || fail=1
++compare out exp || fail=1
++echo 'abcdefghijklmnopqrstuvwxyz' |
++tr '[:lower:][:lower:]' '[:upper:]0-9' > out || fail=1
++compare out exp || fail=1
++
++# Validate the alignment of case classes
++tr 'A-Z[:lower:]' 'a-y[:upper:]' < /dev/null && fail=1
++tr '[:upper:][:lower:]' 'a-y[:upper:]' < /dev/null && fail=1
++tr 'A-Y[:lower:]' 'a-z[:upper:]' < /dev/null && fail=1
++tr 'A-Z[:lower:]' '[:lower:][:upper:]' < /dev/null && fail=1
++tr 'A-Z[:lower:]' '[:lower:]A-Z' < /dev/null && fail=1
++tr '[:upper:][:lower:]' 'a-z[:upper:]' < /dev/null || fail=1
++tr '[:upper:][:lower:]' '[:upper:]a-z' < /dev/null || fail=1
++
++# Before coreutils 8.6 the trailing space in string1
++# caused the case class in string2 to be extended.
++# However that was not portable, dependent on locale
++# and in contravention of POSIX.
++tr '[:upper:] ' '[:lower:]' < /dev/null 2>out && fail=1
++echo 'tr: when translating with string1 longer than string2,
++the latter string must not end with a character class' > exp
++compare out exp || fail=1
++
++# Up to coreutils-6.9, tr rejected an unmatched [:lower:] or [:upper:] in SET1.
++echo '#$%123abcABC' | tr '[:lower:]' '[.*]' > out || fail=1
++echo '#$%123...ABC' > exp
++compare out exp || fail=1
++echo '#$%123abcABC' | tr '[:upper:]' '[.*]' > out || fail=1
++echo '#$%123abc...' > exp
++compare out exp || fail=1
++
++# When doing a case-converting translation with something after the
++# [:upper:] and [:lower:] elements, ensure that tr honors the following byte.
++echo 'abc.' | tr '[:lower:].' '[:upper:]x' > out || fail=1
++echo 'ABCx' > exp
++compare out exp || fail=1
++
++# Before coreutils 8.6 the disparate number of upper and lower
++# characters in some locales, triggered abort()s and invalid behavior
++export LC_ALL=en_US.ISO-8859-1
++
++if test "$(locale charmap 2>/dev/null)" = ISO-8859-1; then
++  # Up to coreutils-6.9.91, this would fail with the diagnostic:
++  # tr: misaligned [:upper:] and/or [:lower:] construct
++  # with LC_CTYPE=en_US.ISO-8859-1.
++  tr '[:upper:]' '[:lower:]' < /dev/null || fail=1
++
++  tr '[:upper:] ' '[:lower:]' < /dev/null 2>out && fail=1
++  echo 'tr: when translating with string1 longer than string2,
++the latter string must not end with a character class' > exp
++  compare out exp || fail=1
++
++  # Ensure when there are a different number of elements
++  # in each string, we validate the case mapping correctly
++  echo 'abc.xyz' |
++  tr 'ab[:lower:]' '0-1[:upper:]' > out || fail=1
++  echo 'ABC.XYZ' > exp
++  compare out exp || fail=1
++
++  # Ensure we extend string2 appropriately
++  echo 'ABC- XYZ' |
++  tr '[:upper:]- ' '[:lower:]_' > out || fail=1
++  echo 'abc__xyz' > exp
++  compare out exp || fail=1
++
++  # Ensure the size of the case classes are accounted
++  # for as a unit.
++  echo 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' |
++  tr '[:upper:]A-B' '[:lower:]0' >out || fail=1
++  echo '00cdefghijklmnopqrstuvwxyz' > exp
++  compare out exp || fail=1
++
++  # Ensure the size of the case classes are accounted
++  # for as a unit.
++  echo 'a' |
++  tr -t '[:lower:]a' '[:upper:]0' >out || fail=1
++  echo '0' > exp
++  compare out exp || fail=1
++
++  # Ensure the size of the case classes are accounted
++  # for as a unit.
++  echo 'a' |
++  tr -t '[:lower:][:lower:]a' '[:lower:][:upper:]0' >out || fail=1
++  echo '0' > exp
++  compare out exp || fail=1
++fi
++
++Exit $fail

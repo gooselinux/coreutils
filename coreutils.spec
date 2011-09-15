@@ -7,6 +7,8 @@ Group:   System Environment/Base
 Url:     http://www.gnu.org/software/coreutils/
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 Source0: ftp://ftp.gnu.org/gnu/%{name}/%{name}-%{version}.tar.xz
+#updated danish translation for 8.4 coreutils with correct encoding
+Source1: coreutils-8.4.da.po
 Source101:  coreutils-DIR_COLORS
 Source102:  coreutils-DIR_COLORS.lightbgcolor
 Source103:  coreutils-DIR_COLORS.256color
@@ -22,6 +24,10 @@ Source203:  coreutils-runuser-l.pamd
 Patch1: coreutils-8.4-who-msgstatus.patch
 #fix detection of xattr support in configure
 Patch2: coreutils-8.4-xattrmodule.patch
+#fix double free error in tac (reported in debian bug #594666)
+Patch3: coreutils-8.5-tac-doublefree.patch
+#fix various case conversion issues in tr(#611274)
+Patch4: coreutils-8.5-trcaseconversion.patch
 
 # Our patches
 #general patch to workaround koji build system issues
@@ -30,14 +36,8 @@ Patch100: coreutils-6.10-configuration.patch
 Patch101: coreutils-6.10-manpages.patch
 #temporarily workaround probable kernel issue with TCSADRAIN(#504798)
 Patch102: coreutils-7.4-sttytcsadrain.patch
-#add support for dtr/dsr to stty
-Patch103: coreutils-445213-stty-dtrdsr.patch
 #do display processor type for uname -p/-i based on uname(2) syscall
-Patch104: coreutils-8.2-uname-processortype.patch
-#bz 479364 (df --direct)
-Patch105: coreutils-df-direct.patch
-#bz 600384 - some japanese translation missing (as marked fuzzy)
-Patch106: coreutils-fuzzyjapanesetranslation.patch
+Patch103: coreutils-8.2-uname-processortype.patch
 
 # sh-utils
 #add info about TZ envvar to date manpage
@@ -66,6 +66,8 @@ Patch912: coreutils-overflow.patch
 Patch915: coreutils-split-pam.patch
 #prevent koji build failure with wrong getfacl exit code
 Patch916: coreutils-getfacl-exit-code.patch
+#compile su with pie flag and RELRO protection
+Patch917: coreutils-8.4-su-pie.patch
 
 #SELINUX Patch - implements Redhat changes
 #(upstream did some SELinux implementation unlike with RedHat patch)
@@ -127,15 +129,14 @@ Libraries for coreutils package.
 # From upstream
 %patch1 -p1 -b .whomsg
 %patch2 -p1 -b .xattr
+%patch3 -p1 -b .doublefree
+%patch4 -p1 -b .caseconvert
 
 # Our patches
 %patch100 -p1 -b .configure
 %patch101 -p1 -b .manpages
 %patch102 -p1 -b .tcsadrain
-%patch103 -p1 -b .dtrdsr
-%patch104 -p1 -b .sysinfo
-%patch105 -p1 -b .dfdirect
-%patch106 -p1 -b .japfuzzy
+%patch103 -p1 -b .sysinfo
 
 # sh-utils
 %patch703 -p1 -b .dateman
@@ -152,12 +153,17 @@ Libraries for coreutils package.
 %patch912 -p1 -b .overflow
 %patch915 -p1 -b .splitl
 %patch916 -p1 -b .getfacl-exit-code
+%patch917 -p1 -b .pie
 
 #SELinux
 %patch950 -p1 -b .selinux
 %patch951 -p1 -b .selinuxman
 
-chmod a+x tests/misc/sort-mb-tests tests/df/direct
+chmod a+x tests/misc/sort-mb-tests
+chmod a+x tests/misc/tr-case-class
+
+#fix bad encoding in danish translations(#615945)
+cp -a %{SOURCE1} po/da.po
 
 #fix typos/mistakes in localized documentation(#439410, #440056)
 find ./po/ -name "*.p*" | xargs \
@@ -350,68 +356,77 @@ fi
 %{_libdir}/coreutils
 
 %changelog
-* Mon Jun 14 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-9
-- compile coreutils with SELinux support again(#603617)
+* Fri Oct 01 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-9
+- various fixes for case conversion in tr(#611274)
+- change assertion failure for invalid multibyte input
+  in sort to less confusing error message(#591352)
+- add RELRO protection to su as well (#630017)
+- compile su with pie again (#630017)
+- fix double free abort in tac (#628213)
+- Add .ear, .war, .sar , for Java jar-like archives to
+  dircolors (#616497)
 
-* Mon Jun 07 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-8
-- remove word "fuzzy" from japanese translation of ls -l
-  timestamp format(#600384)
+* Tue Jul 20 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-8
+- fix danish translation file encoding(#615945)
 
-* Wed Apr 28 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-7
+* Mon Jun 14 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-7
+- compile coreutils with SELinux support again(#603359)
+
+* Wed Apr 28 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-6
 - doublequote LS_COLORS in colorls.*sh scripts to speedup
-  shell start(#586949)
+  shell start(#586029)
 - update /etc/DIR_COLORS* files
 - move readlink from /usr/bin to bin, keep symlink in
-  /usr/bin(#586948)
-
-* Mon Mar 29 2010 Kamil Dudka <kdudka@redhat.com> - 8.4-6
-- a new option df --direct (#479364)
-
-* Sat Mar 20 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-5
+  /usr/bin(#580682)
 - run tput colors in colorls profile.d scripts only
-  in the interactive mode(#586947)
+  in the interactive mode(#450424)
 
-* Fri Feb 12 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-4
+* Fri Feb 12 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-5
 - fix exit status of terminated child processes in su with
-  pam(#563852)
+  pam(#559098)
+
+* Fri Feb 05 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-4
 - do not depend on selinux patch application in
-  _require_selinux tests
+  _require_selinux tests(#556350)
 
 * Fri Jan 29 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-3
 - do not fail tests if there are no loopdevices left
   (#558898)
 
-* Mon Jan 25 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-2
+* Tue Jan 26 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-2
 - who doesn't determine user's message status correctly
-  (#553625)
+  (#454261)
 
 * Thu Jan 14 2010 Ondrej Vasik <ovasik@redhat.com> - 8.4-1
 - new upstream release 8.4
 
 * Fri Jan 08 2010 Ondrej Vasik <ovasik@redhat.com> - 8.3-1
-- new upstream release 8.3, fixes several regressions
+- new upstream release 8.3
 
-* Wed Jan 06 2010 Ondrej Vasik <ovasik@redhat.com> - 8.2-3
-- require gmp-devel/gmp for large numbers support
-- fix misc/selinux root-only test
+* Wed Jan 06 2010 Ondrej Vasik <ovasik@redhat.com> - 8.2-6
+- require gmp-devel/gmp for large numbers support(#552846)
+
+* Sun Dec 27 2009 Ondrej Vasik <ovasik@redhat.com> - 8.2-5
+- fix misc/selinux root-only test(#550494)
+
+* Sat Dec 19 2009 Ondrej Vasik <ovasik@redhat.com> - 8.2-4
 - bring back uname -p/-i functionality except of the
-  athlon hack
+  athlon hack(#548834)
 - comment patches
 
+* Wed Dec 16 2009 Ondrej Vasik <ovasik@redhat.com> - 8.2-3
+- use grep instead of deprecated egrep in colorls.sh script
+  (#548174)
+- remove unnecessary versioned requires/conflicts
+- remove non-upstream hack for uname -p
+
 * Wed Dec 16 2009 Ondrej Vasik <ovasik@redhat.com> - 8.2-2
-- Sanity changes(#548421):
-  - use grep instead of deprecated egrep in colorls.sh script
-  - remove unnecessary versioned requires
-  - remove non-upstream hack for uname -p
-  - add dtrdsr patch from RHEL-5 to prevent regression
+- fix DIR_COLORS.256color file
 
 * Fri Dec 11 2009 Ondrej Vasik <ovasik@redhat.com> - 8.2-1
 - new upstream release 8.2
 - removed applied patches, temporarily do not run dup_cloexec()
   dependent gnulib tests failing in koji
-- do not use bold attribute in 256-colors dircolor
-- CVE-2009-4135 coreutils: Unsafe temporary directory use
-  in "distcheck" rule(#546705)
 
 * Fri Nov 27 2009 Ondrej Vasik <ovasik@redhat.com> - 8.1-1
 - new upstream release 8.1

@@ -803,7 +803,7 @@ diff -urNp coreutils-8.4-orig/tests/test-lib.sh coreutils-8.4/tests/test-lib.sh
  {
 -  case `ls -Zd .` in
 -    '? .'|'unlabeled .')
-+  case `ls --scontext -d . | cut -f1 -d" "` in
++  case `ls -Zd . | cut -f4 -d" "` in
 +    '?'|'unlabeled')
        skip_test_ "this system (or maybe just" \
          "the current file system) lacks SELinux support"

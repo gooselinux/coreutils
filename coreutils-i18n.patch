@@ -2928,7 +2928,7 @@ diff -urNp coreutils-8.0-orig/src/sort.c coreutils-8.0/src/sort.c
  {
    size_t lo = 0;
    size_t hi = MONTHS_PER_YEAR;
-@@ -1996,11 +2324,79 @@ compare_version (char *restrict texta, s
+@@ -1996,11 +2324,80 @@ compare_version (char *restrict texta, s
    return diff;
  }
  
@@ -2965,7 +2965,8 @@ diff -urNp coreutils-8.0-orig/src/sort.c coreutils-8.0/src/sort.c
 +  memset (&state, '\0', sizeof(mbstate_t));
 +
 +  wclength = mbsrtowcs (month_wcs, pp, len + 1, &state);
-+  assert (wclength != (size_t)-1 && *pp == NULL);
++  if (wclength == (size_t)-1 || *pp != NULL)
++    error (SORT_FAILURE, 0, _("Invalid multibyte input %s."), quote(s));
 +
 +  for (i = 0; i < wclength; i++)
 +    {

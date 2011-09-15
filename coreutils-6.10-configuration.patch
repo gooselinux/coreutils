@@ -55,19 +55,6 @@ diff -urNp coreutils-8.4-orig/gnulib-tests/gnulib.mk coreutils-8.4/gnulib-tests/
  
  ## end   gnulib module linkat-tests
  
-@@ -985,9 +985,9 @@ EXTRA_DIST += test-mbsstr1.c test-mbsstr
- 
- ## begin gnulib module memchr-tests
- 
--TESTS += test-memchr
--check_PROGRAMS += test-memchr
--EXTRA_DIST += test-memchr.c zerosize-ptr.h signature.h macros.h
-+#TESTS += test-memchr
-+#check_PROGRAMS += test-memchr
-+#EXTRA_DIST += test-memchr.c zerosize-ptr.h signature.h macros.h
- 
- ## end   gnulib module memchr-tests
- 
 @@ -1532,9 +1532,9 @@ EXTRA_DIST += test-uname.c signature.h m
  
  ## begin gnulib module unistd-safer-tests
@@ -80,21 +67,6 @@ diff -urNp coreutils-8.4-orig/gnulib-tests/gnulib.mk coreutils-8.4/gnulib-tests/
 +#EXTRA_DIST += test-dup-safer.c macros.h
  
  ## end   gnulib module unistd-safer-tests
- 
-@@ -1644,10 +1644,10 @@ EXTRA_DIST += test-usleep.c signature.h 
- 
- ## begin gnulib module utimens-tests
- 
--TESTS += test-utimens
--check_PROGRAMS += test-utimens
--test_utimens_LDADD = $(LDADD) $(LIB_CLOCK_GETTIME) @LIBINTL@
--EXTRA_DIST += nap.h test-futimens.h test-lutimens.h test-utimens.h test-utimens-common.h test-utimens.c macros.h
-+#TESTS += test-utimens
-+#check_PROGRAMS += test-utimens
-+#test_utimens_LDADD = $(LDADD) $(LIB_CLOCK_GETTIME) @LIBINTL@
-+#EXTRA_DIST += nap.h test-futimens.h test-lutimens.h test-utimens.h test-utimens-common.h test-utimens.c macros.h
- 
- ## end   gnulib module utimens-tests
  
 diff -urNp coreutils-8.4-orig/tests/Makefile.am coreutils-8.4/tests/Makefile.am
 --- coreutils-8.4-orig/tests/Makefile.am	2010-01-03 18:06:20.000000000 +0100
